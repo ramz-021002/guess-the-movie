@@ -1,0 +1,65 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; let a running deploy finish instead of cancelling it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Fail the deploy if scenes.js has a bad title, duplicate id,
+      # or a context that names its own answer.
+      - name: Validate data
+        run: |
+          node -e '
+            global.window = {};
+            require("./data/catalog.js");
+            require("./data/scenes.js");
+            const cat = new Map(window.CATALOG.map(c => [c.id, c]));
+            const seen = new Set();
+            let bad = 0;
+            for (const s of window.SCENES) {
+              const t = cat.get(s.title);
+              if (!t) { console.error("Unknown title:", s.id, s.title); bad++; continue; }
+              if (seen.has(s.id)) { console.error("Duplicate id:", s.id); bad++; }
+              seen.add(s.id);
+              if (s.context.toLowerCase().includes(t.title.toLowerCase())) {
+                console.error("Context names the answer:", s.id); bad++;
+              }
+            }
+            const ids = window.CATALOG.map(c => c.id);
+            if (ids.length !== new Set(ids).size) { console.error("Duplicate catalog ids"); bad++; }
+            console.log(window.SCENES.length + " scenes checked, " + bad + " problems");
+            process.exit(bad ? 1 : 0);
+          '
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4
